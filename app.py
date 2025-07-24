@@ -13,36 +13,46 @@ except Exception as e:
     st.error(f"Failed to initialize Groq client: {str(e)}")
     st.stop()
 
-# Define CSV file structures
+# Define CSV file structures with real column names
 CSV_STRUCTURES = {
-    "sample_mortgage_accounts.csv": ["customer_id", "account_status", "loan_amount", "interest_rate", "start_date", "term"],
-    "sample_loan_repayments.csv": ["transaction_id", "customer_id", "payment_amount", "payment_date", "loan_id", "status"],
-    "sample_telco_billing.csv": ["bill_id", "customer_id", "amount", "due_date", "paid_date", "service_type"],
-    "sample_product_enrollments.csv": ["enrollment_id", "customer_id", "product_id", "enrollment_date", "status"],
-    "sample_customer_profiles.csv": ["customer_id", "name", "age", "income", "credit_score", "address"],
+    "sample_mortgage_accounts.csv": ["ccustomer_id",	"product_type",	"account_status",	"loan_open_date",	"loan_balance"],
+    "sample_loan_repayments.csv": ["repayment_id",	"customer_id",	"loan_account_number",	"repayment_date",	"repayment_amount",	"installment_number",	"payment_method	status",	"loan_type",	"interest_component",	"principal_component",	"remaining_balance"],
+    "sample_telco_billing.csv": ["billing_id,	"customer_id",	"bill_date","bill_amount","plan_type","data_used_gb",	"voice_minutes","sms_count","channel"],
+    "sample_product_enrollments.csv": ["enrollment_id",	"customer_id",	"product_type",	"product_name",	"enrollment_date",	"status"],
+    "sample_customer_profiles.csv": ["customer_id",	"name",	"email",	"phone",	"dob",	"gender",	"region",	"segment",	"household_id",	"is_primary"],
     "sample_savings_account_transactions.csv": ["transaction_id", "account_id", "customer_id", "amount", "date", "transaction_type"],
-    "sample_credit_card_transactions.csv": ["transaction_id", "card_id", "customer_id", "amount", "date", "merchant", "category"]
+    "sample_credit_card_transactions.csv": ["customer_id",	"card_number",	"transaction_date",	"transaction_amount"	,"transaction_type"]
 }
 
 def clean_user_input(text: str) -> str:
     """Clean user input by removing extra spaces between characters"""
-    # First remove any existing extra spaces
     text = ' '.join(text.split())
-    # Handle special cases where spaces might have been added between letters
-    # This is a simple fix - for more complex cases you might need regex
     return text.replace(" o n ", " on ").replace(" A N D ", " AND ").replace(" O R ", " OR ")
 
 def generate_prompt_guidance(user_input: str, modification_request: Optional[str] = None) -> str:
     """Generate guidance for the AI based on user input and available data"""
-    available_data = "\n".join([f"- {f}: {', '.join(cols)}" for f, cols in CSV_STRUCTURES.items()])
+    # Create a detailed description of available data sources and columns
+    available_data = []
+    for f, cols in CSV_STRUCTURES.items():
+        available_data.append(f"Data source: {f}")
+        available_data.append(f"Columns: {', '.join(cols)}")
+        available_data.append("")  # Add empty line for readability
     
     base_prompt = f"""
     You are a financial rule generation assistant. Your task is to help create rules for mortgage holders based on available data sources.
 
-    Available data sources and their columns:
-    {available_data}
+    Available data sources and their exact column names:
+    {('\n').join(available_data)}
 
     The user has provided this requirement: "{user_input}"
+
+    IMPORTANT INSTRUCTIONS:
+    1. Carefully analyze which data source(s) contain the fields mentioned in the user's request
+    2. Use ONLY the exact column names from the data sources listed above
+    3. Never invent or make up column names - they must exist in the data sources
+    4. If the user refers to a concept (e.g., "payment history"), map it to the exact column name (e.g., "payment_amount")
+    5. For date fields, use the exact column names like "payment_date", "start_date", etc.
+    6. For amounts, use the exact column names like "loan_amount", "payment_amount", etc.
     """
     
     if modification_request:
@@ -50,12 +60,12 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     
     base_prompt += """
     Analyze this requirement and:
-    1. Identify which data sources are needed
-    2. Determine which columns from each source should be used
+    1. Identify which data sources are needed (must be from the list above)
+    2. Determine which exact columns from each source should be used (must match exactly)
     3. Create a logical rule structure with proper AND/OR conditions
     4. Include all these fields for each condition:
-       - dataSource
-       - field
+       - dataSource (must match exactly from the list above)
+       - field (must be the exact column name from the data source)
        - eligibilityPeriod (use "Rolling 30 days" for time-based conditions, otherwise "N/A")
        - function (use "sum", "count", "avg" where appropriate, otherwise "N/A")
        - operator
@@ -65,8 +75,8 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
             "rules": [
                 {
                     "id": "generated_id",
-                    "dataSource": "source_name",
-                    "field": "column_name",
+                    "dataSource": "source_name (must match exactly)",
+                    "field": "column_name (must match exactly)",
                     "eligibilityPeriod": "time_period or N/A",
                     "function": "aggregation_function or N/A",
                     "operator": "comparison_operator",
@@ -80,7 +90,7 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
         }
 
     Respond ONLY with the JSON output. Do not include any additional explanation or markdown formatting.
-    The rule should be as specific as possible to match the user's requirements.
+    The rule must use only the exact data source names and column names provided above.
     """
     
     return base_prompt
@@ -94,7 +104,7 @@ def generate_rule_with_llama(user_input: str, modification_request: Optional[str
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a financial rule generation expert that creates precise JSON rules based on data sources."
+                    "content": "You are a financial rule generation expert that creates precise JSON rules using ONLY the exact data sources and column names provided."
                 },
                 {
                     "role": "user",
@@ -109,7 +119,36 @@ def generate_rule_with_llama(user_input: str, modification_request: Optional[str
         
         # Clean the response to extract just the JSON
         json_str = response_content[response_content.find('{'):response_content.rfind('}')+1]
-        return json.loads(json_str)
+        rule = json.loads(json_str)
+        
+        # Validate that all fields in the rule exist in our data sources
+        if "rules" in rule:
+            for rule_item in rule["rules"]:
+                data_source = rule_item.get("dataSource")
+                field = rule_item.get("field")
+                
+                if data_source not in CSV_STRUCTURES:
+                    st.error(f"Invalid data source in generated rule: {data_source}")
+                    return None
+                
+                if field and field not in CSV_STRUCTURES[data_source]:
+                    st.error(f"Invalid field '{field}' for data source '{data_source}'")
+                    return None
+                
+                # Check condition groups if they exist
+                for condition in rule_item.get("conditions", []):
+                    ds = condition.get("dataSource")
+                    fld = condition.get("field")
+                    
+                    if ds not in CSV_STRUCTURES:
+                        st.error(f"Invalid data source in condition group: {ds}")
+                        return None
+                    
+                    if fld and fld not in CSV_STRUCTURES[ds]:
+                        st.error(f"Invalid field '{fld}' for data source '{ds}' in condition group")
+                        return None
+        
+        return rule
     
     except Exception as e:
         st.error(f"Error generating rule: {str(e)}")
@@ -221,7 +260,6 @@ def initialize_session_state():
 def display_chat_message(role: str, content: str):
     """Display a chat message in the UI"""
     with st.chat_message(role):
-        # Clean the content if it's user input
         if role == "user":
             content = clean_user_input(content)
         st.markdown(content)
