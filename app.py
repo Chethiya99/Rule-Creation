@@ -24,6 +24,14 @@ CSV_STRUCTURES = {
     "sample_credit_card_transactions.csv": ["transaction_id", "card_id", "customer_id", "amount", "date", "merchant", "category"]
 }
 
+def clean_user_input(text: str) -> str:
+    """Clean user input by removing extra spaces between characters"""
+    # First remove any existing extra spaces
+    text = ' '.join(text.split())
+    # Handle special cases where spaces might have been added between letters
+    # This is a simple fix - for more complex cases you might need regex
+    return text.replace(" o n ", " on ").replace(" A N D ", " AND ").replace(" O R ", " OR ")
+
 def generate_prompt_guidance(user_input: str, modification_request: Optional[str] = None) -> str:
     """Generate guidance for the AI based on user input and available data"""
     available_data = "\n".join([f"- {f}: {', '.join(cols)}" for f, cols in CSV_STRUCTURES.items()])
@@ -45,7 +53,14 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     1. Identify which data sources are needed
     2. Determine which columns from each source should be used
     3. Create a logical rule structure with proper AND/OR conditions
-    4. Output the rule in JSON format matching this schema:
+    4. Include all these fields for each condition:
+       - dataSource
+       - field
+       - eligibilityPeriod (use "Rolling 30 days" for time-based conditions, otherwise "N/A")
+       - function (use "sum", "count", "avg" where appropriate, otherwise "N/A")
+       - operator
+       - value
+    5. Output the rule in JSON format matching this schema:
         {
             "rules": [
                 {
@@ -101,7 +116,7 @@ def generate_rule_with_llama(user_input: str, modification_request: Optional[str
         return None
 
 def display_rule_ui(rule: Dict[str, Any]) -> None:
-    """Display the rule in the UI similar to the provided images"""
+    """Display the rule in the UI with all required fields"""
     if not rule or "rules" not in rule:
         st.warning("No valid rule generated yet")
         return
@@ -116,45 +131,75 @@ def display_rule_ui(rule: Dict[str, Any]) -> None:
     for i, rule_item in enumerate(rule["rules"]):
         if rule_item.get("ruleType") == "condition":
             with st.expander(f"Condition {i+1}", expanded=True):
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.selectbox("Data Source", [rule_item.get("dataSource", "")], 
+                cols = st.columns(7)
+                with cols[0]:
+                    st.text_input("Data Source", value=rule_item.get("dataSource", ""), 
                                 key=f"ds_{i}")
-                with col2:
-                    st.selectbox("Field", [rule_item.get("field", "")], 
+                with cols[1]:
+                    st.text_input("Field", value=rule_item.get("field", ""), 
                                 key=f"field_{i}")
-                with col3:
-                    st.selectbox("Operator", [rule_item.get("operator", "")], 
+                with cols[2]:
+                    st.selectbox("eligibilityPeriod", 
+                                ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
+                                index=0 if rule_item.get("eligibilityPeriod") == "N/A" else 1,
+                                key=f"period_{i}")
+                with cols[3]:
+                    st.selectbox("function", 
+                                ["N/A", "sum", "count", "avg", "max", "min"],
+                                index=0 if rule_item.get("function") == "N/A" else 1,
+                                key=f"func_{i}")
+                with cols[4]:
+                    st.selectbox("Operator", 
+                                ["=", ">", "<", ">=", "<=", "!=", "contains"],
+                                index=0,
                                 key=f"op_{i}")
-                with col4:
-                    st.text_input("Value", rule_item.get("value", ""), 
+                with cols[5]:
+                    st.text_input("Value", value=rule_item.get("value", ""), 
                                 key=f"val_{i}")
                 
                 if i < len(rule["rules"]) - 1:
-                    st.selectbox("Connector", [rule_item.get("connector", "AND")], 
-                                key=f"conn_{i}")
+                    with cols[6]:
+                        st.selectbox("Connector", 
+                                    ["AND", "OR"],
+                                    index=0 if rule_item.get("connector", "AND") == "AND" else 1,
+                                    key=f"conn_{i}")
         
         elif rule_item.get("ruleType") == "conditionGroup":
             with st.expander(f"Condition Group {i+1}", expanded=True):
                 st.markdown("#### Condition Group")
                 for j, condition in enumerate(rule_item.get("conditions", [])):
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.selectbox("Data Source", [condition.get("dataSource", "")], 
+                    cols = st.columns(7)
+                    with cols[0]:
+                        st.text_input("Data Source", value=condition.get("dataSource", ""), 
                                     key=f"gds_{i}_{j}")
-                    with col2:
-                        st.selectbox("Field", [condition.get("field", "")], 
+                    with cols[1]:
+                        st.text_input("Field", value=condition.get("field", ""), 
                                     key=f"gfield_{i}_{j}")
-                    with col3:
-                        st.selectbox("Operator", [condition.get("operator", "")], 
+                    with cols[2]:
+                        st.selectbox("eligibilityPeriod", 
+                                    ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
+                                    index=0 if condition.get("eligibilityPeriod") == "N/A" else 1,
+                                    key=f"gperiod_{i}_{j}")
+                    with cols[3]:
+                        st.selectbox("function", 
+                                    ["N/A", "sum", "count", "avg", "max", "min"],
+                                    index=0 if condition.get("function") == "N/A" else 1,
+                                    key=f"gfunc_{i}_{j}")
+                    with cols[4]:
+                        st.selectbox("Operator", 
+                                    ["=", ">", "<", ">=", "<=", "!=", "contains"],
+                                    index=0,
                                     key=f"gop_{i}_{j}")
-                    with col4:
-                        st.text_input("Value", condition.get("value", ""), 
+                    with cols[5]:
+                        st.text_input("Value", value=condition.get("value", ""), 
                                     key=f"gval_{i}_{j}")
                     
                     if j < len(rule_item.get("conditions", [])) - 1:
-                        st.selectbox("Connector", [condition.get("connector", "AND")], 
-                                    key=f"gconn_{i}_{j}")
+                        with cols[6]:
+                            st.selectbox("Connector", 
+                                        ["AND", "OR"],
+                                        index=0 if condition.get("connector", "AND") == "AND" else 1,
+                                        key=f"gconn_{i}_{j}")
 
 def initialize_session_state():
     """Initialize all session state variables"""
@@ -176,6 +221,9 @@ def initialize_session_state():
 def display_chat_message(role: str, content: str):
     """Display a chat message in the UI"""
     with st.chat_message(role):
+        # Clean the content if it's user input
+        if role == "user":
+            content = clean_user_input(content)
         st.markdown(content)
 
 def handle_user_confirmation(confirmation: bool):
@@ -193,7 +241,7 @@ def generate_new_rule():
     """Generate a new rule based on current state"""
     modification_request = None
     if st.session_state.awaiting_modification and st.session_state.messages[-1]["role"] == "user":
-        modification_request = st.session_state.messages[-1]["content"]
+        modification_request = clean_user_input(st.session_state.messages[-1]["content"])
     
     with st.spinner("Generating rule..."):
         new_rule = generate_rule_with_llama(
@@ -219,6 +267,39 @@ def generate_new_rule():
 def main():
     st.set_page_config(page_title="Mortgage Rule Generator", layout="wide")
     st.title("🏦 Mortgage Rule Generator with Llama 3")
+    
+    # Custom CSS for better UI
+    st.markdown("""
+    <style>
+        .stChatFloatingInputContainer {
+            bottom: 20px;
+        }
+        .stChatMessage {
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+        }
+        .assistant-message {
+            background-color: #f0f2f6;
+        }
+        .user-message {
+            background-color: #e3f2fd;
+        }
+        .stTextInput input, .stSelectbox select {
+            font-size: 14px !important;
+        }
+        .stExpander {
+            margin-bottom: 15px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+        }
+        .stExpander .streamlit-expanderHeader {
+            font-weight: bold;
+            background-color: #f5f5f5;
+            padding: 10px 15px;
+        }
+    </style>
+    """, unsafe_allow_html=True)
     
     # Initialize session state
     initialize_session_state()
@@ -264,19 +345,21 @@ def main():
         
         # Handle user input
         if prompt := st.chat_input("Type your message here..."):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            display_chat_message("user", prompt)
+            # Clean the user input first
+            cleaned_prompt = clean_user_input(prompt)
+            st.session_state.messages.append({"role": "user", "content": cleaned_prompt})
+            display_chat_message("user", cleaned_prompt)
             
             # Determine what to do based on current state
             if not st.session_state.user_prompt:
                 # First prompt - generate initial rule
-                st.session_state.user_prompt = prompt
+                st.session_state.user_prompt = cleaned_prompt
                 generate_new_rule()
                 st.rerun()
             
             elif st.session_state.awaiting_confirmation:
                 # User is responding to confirmation question
-                if "yes" in prompt.lower() or "correct" in prompt.lower():
+                if "yes" in cleaned_prompt.lower() or "correct" in cleaned_prompt.lower():
                     handle_user_confirmation(True)
                 else:
                     handle_user_confirmation(False)
@@ -289,7 +372,7 @@ def main():
             
             else:
                 # New conversation
-                st.session_state.user_prompt = prompt
+                st.session_state.user_prompt = cleaned_prompt
                 st.session_state.current_rule = None
                 st.session_state.confirmed = False
                 generate_new_rule()
