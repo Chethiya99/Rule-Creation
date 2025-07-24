@@ -327,5 +327,79 @@ def main():
     # Initialize session state
     initialize_session_state()
     
+    # Create main layout
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        # Display rule UI
+        if st.session_state.current_rule:
+            display_rule_ui(st.session_state.current_rule)
+            
+            # Show final JSON if confirmed
+            if st.session_state.confirmed:
+                st.success("✅ Final Rule Confirmed")
+                st.json(st.session_state.current_rule)
+                
+                # Add download button
+                json_str = json.dumps(st.session_state.current_rule, indent=2)
+                st.download_button(
+                    label="Download Rule JSON",
+                    data=json_str,
+                    file_name=f"mortgage_rule_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json"
+                )
+                
+                if st.button("Create New Rule"):
+                    # Reset for new rule
+                    st.session_state.messages = [
+                        {"role": "assistant", "content": "Let's create a new rule. What criteria would you like to use?"}
+                    ]
+                    st.session_state.current_rule = None
+                    st.session_state.confirmed = False
+                    st.session_state.user_prompt = ""
+                    st.rerun()
+    
+    with col2:
+        # Display chat messages
+        st.subheader("Rule Assistant")
+        
+        for message in st.session_state.messages:
+            display_chat_message(message["role"], message["content"])
+        
+        # Handle user input
+        if prompt := st.chat_input("Type your message here..."):
+            # Clean the user input first
+            cleaned_prompt = clean_user_input(prompt)
+            st.session_state.messages.append({"role": "user", "content": cleaned_prompt})
+            display_chat_message("user", cleaned_prompt)
+            
+            # Determine what to do based on current state
+            if not st.session_state.user_prompt:
+                # First prompt - generate initial rule
+                st.session_state.user_prompt = cleaned_prompt
+                generate_new_rule()
+                st.rerun()
+            
+            elif st.session_state.awaiting_confirmation:
+                # User is responding to confirmation question
+                if "yes" in cleaned_prompt.lower() or "correct" in cleaned_prompt.lower():
+                    handle_user_confirmation(True)
+                else:
+                    handle_user_confirmation(False)
+                st.rerun()
+            
+            elif st.session_state.awaiting_modification:
+                # User is providing modification details
+                generate_new_rule()
+                st.rerun()
+            
+            else:
+                # New conversation
+                st.session_state.user_prompt = cleaned_prompt
+                st.session_state.current_rule = None
+                st.session_state.confirmed = False
+                generate_new_rule()
+                st.rerun()
+
 if __name__ == "__main__":
     main()
