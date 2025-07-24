@@ -15,14 +15,33 @@ except Exception as e:
 
 # Define CSV file structures with real column names
 CSV_STRUCTURES = {
-    "sample_mortgage_accounts.csv": ["ccustomer_id",	"product_type",	"account_status",	"loan_open_date",	"loan_balance"],
-    "sample_loan_repayments.csv": ["repayment_id",	"customer_id",	"loan_account_number",	"repayment_date",	"repayment_amount",	"installment_number",	"payment_method	status",	"loan_type",	"interest_component",	"principal_component",	"remaining_balance"],
-    "sample_telco_billing.csv": ["billing_id,	"customer_id",	"bill_date","bill_amount","plan_type","data_used_gb",	"voice_minutes","sms_count","channel"],
-    "sample_product_enrollments.csv": ["enrollment_id",	"customer_id",	"product_type",	"product_name",	"enrollment_date",	"status"],
-    "sample_customer_profiles.csv": ["customer_id",	"name",	"email",	"phone",	"dob",	"gender",	"region",	"segment",	"household_id",	"is_primary"],
-    "sample_savings_account_transactions.csv": ["transaction_id", "account_id", "customer_id", "amount", "date", "transaction_type"],
-    "sample_credit_card_transactions.csv": ["customer_id",	"card_number",	"transaction_date",	"transaction_amount"	,"transaction_type"]
+    "sample_mortgage_accounts.csv": [
+        "ccustomer_id", "product_type", "account_status", "loan_open_date", "loan_balance"
+    ],
+    "sample_loan_repayments.csv": [
+        "repayment_id", "customer_id", "loan_account_number", "repayment_date",
+        "repayment_amount", "installment_number", "payment_method_status", "loan_type",
+        "interest_component", "principal_component", "remaining_balance"
+    ],
+    "sample_telco_billing.csv": [
+        "billing_id", "customer_id", "bill_date", "bill_amount", "plan_type",
+        "data_used_gb", "voice_minutes", "sms_count", "channel"
+    ],
+    "sample_product_enrollments.csv": [
+        "enrollment_id", "customer_id", "product_type", "product_name", "enrollment_date", "status"
+    ],
+    "sample_customer_profiles.csv": [
+        "customer_id", "name", "email", "phone", "dob", "gender",
+        "region", "segment", "household_id", "is_primary"
+    ],
+    "sample_savings_account_transactions.csv": [
+        "transaction_id", "account_id", "customer_id", "amount", "date", "transaction_type"
+    ],
+    "sample_credit_card_transactions.csv": [
+        "customer_id", "card_number", "transaction_date", "transaction_amount", "transaction_type"
+    ]
 }
+
 
 def clean_user_input(text: str) -> str:
     """Clean user input by removing extra spaces between characters"""
