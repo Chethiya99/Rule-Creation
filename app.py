@@ -5,6 +5,7 @@ import json
 from typing import List, Dict, Any, Optional
 import time
 from datetime import datetime
+import os
 
 # Initialize Groq client
 try:
@@ -13,35 +14,31 @@ except Exception as e:
     st.error(f"Failed to initialize Groq client: {str(e)}")
     st.stop()
 
-# Define CSV file structures with real column names
-CSV_STRUCTURES = {
-    "sample_mortgage_accounts.csv": [
-        "ccustomer_id", "product_type", "account_status", "loan_open_date", "loan_balance"
-    ],
-    "sample_loan_repayments.csv": [
-        "repayment_id", "customer_id", "loan_account_number", "repayment_date",
-        "repayment_amount", "installment_number", "payment_method_status", "loan_type",
-        "interest_component", "principal_component", "remaining_balance"
-    ],
-    "sample_telco_billing.csv": [
-        "billing_id", "customer_id", "bill_date", "bill_amount", "plan_type",
-        "data_used_gb", "voice_minutes", "sms_count", "channel"
-    ],
-    "sample_product_enrollments.csv": [
-        "enrollment_id", "customer_id", "product_type", "product_name", "enrollment_date", "status"
-    ],
-    "sample_customer_profiles.csv": [
-        "customer_id", "name", "email", "phone", "dob", "gender",
-        "region", "segment", "household_id", "is_primary"
-    ],
-    "sample_savings_account_transactions.csv": [
-        "transaction_id", "account_id", "customer_id", "amount", "date", "transaction_type"
-    ],
-    "sample_credit_card_transactions.csv": [
-        "customer_id", "card_number", "transaction_date", "transaction_amount", "transaction_type"
-    ]
-}
+# Define the directory where CSV files are stored
+CSV_DIR = "data"  # Change this to your directory path
 
+def get_csv_files_and_columns() -> Dict[str, List[str]]:
+    """Scan the data directory and get all CSV files with their columns"""
+    csv_structures = {}
+    
+    if not os.path.exists(CSV_DIR):
+        os.makedirs(CSV_DIR)
+        st.warning(f"Created directory {CSV_DIR}. Please add your CSV files there.")
+        return csv_structures
+    
+    for filename in os.listdir(CSV_DIR):
+        if filename.endswith(".csv"):
+            try:
+                # Read just the header to get column names
+                df = pd.read_csv(os.path.join(CSV_DIR, filename), nrows=0)
+                csv_structures[filename] = list(df.columns)
+            except Exception as e:
+                st.warning(f"Could not read columns from {filename}: {str(e)}")
+    
+    return csv_structures
+
+# Get CSV structures when the app loads
+CSV_STRUCTURES = get_csv_files_and_columns()
 
 def clean_user_input(text: str) -> str:
     """Clean user input by removing extra spaces between characters"""
@@ -360,6 +357,16 @@ def main():
     
     # Initialize session state
     initialize_session_state()
+    
+    # Show available data sources in sidebar
+    with st.sidebar:
+        st.subheader("Available Data Sources")
+        if not CSV_STRUCTURES:
+            st.warning("No CSV files found in the data directory")
+        else:
+            for filename, columns in CSV_STRUCTURES.items():
+                with st.expander(filename):
+                    st.write("Columns:", ", ".join(columns))
     
     # Create main layout
     col1, col2 = st.columns([2, 1])
