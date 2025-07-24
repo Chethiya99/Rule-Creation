@@ -65,8 +65,6 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     1. You MUST use ONLY the exact column names from the available data sources
     2. Field names are case-sensitive and must match exactly as provided
     3. If a similar concept exists but with different naming, use the provided column name
-    4. For rules with multiple conditions, use a SINGLE conditionGroup with connector "AND" or "OR"
-    5. DO NOT create top-level conditions when a conditionGroup is needed
 
     Available data sources and their EXACT columns:
     {available_data}
@@ -108,11 +106,6 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
             ]
         }
 
-    IMPORTANT: For rules with multiple conditions:
-    - Use a SINGLE conditionGroup that contains all the conditions
-    - Set connector for the conditionGroup (AND/OR)
-    - DO NOT create separate top-level conditions
-
     Respond ONLY with the JSON output. Do not include any additional explanation or markdown formatting.
     The rule should be as specific as possible to match the user's requirements.
     """
@@ -124,7 +117,6 @@ def validate_and_correct_columns(rule: Dict[str, Any]) -> Dict[str, Any]:
     if not rule or "rules" not in rule:
         return rule
     
-    # First pass: correct top-level rules
     for rule_item in rule["rules"]:
         # Handle condition groups
         if rule_item.get("ruleType") == "conditionGroup":
@@ -134,18 +126,6 @@ def validate_and_correct_columns(rule: Dict[str, Any]) -> Dict[str, Any]:
         else:
             rule_item["field"] = correct_column_name(rule_item.get("field", ""))
     
-    # Second pass: remove redundant top-level conditions when conditionGroup exists
-    rules = rule["rules"]
-    new_rules = []
-    condition_group_exists = any(r.get("ruleType") == "conditionGroup" for r in rules)
-    
-    if condition_group_exists:
-        # Only keep conditionGroups and remove standalone conditions
-        new_rules = [r for r in rules if r.get("ruleType") == "conditionGroup"]
-    else:
-        new_rules = rules
-    
-    rule["rules"] = new_rules
     return rule
 
 def correct_column_name(field_name: str) -> str:
@@ -170,10 +150,7 @@ def correct_column_name(field_name: str) -> str:
         "status": "account_status",
         "amount": "payment_amount",
         "score": "credit_score",
-        "type": "transaction_type",
-        "transaction": "amount",
-        "spend": "amount",
-        "minutes": "service_type"  # For telco example
+        "type": "transaction_type"
     }
     
     for partial, full in variations.items():
@@ -191,7 +168,7 @@ def generate_rule_with_llama(user_input: str, modification_request: Optional[str
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a financial rule generation expert that creates precise JSON rules using EXACT column names from provided data sources. For multiple conditions, use a SINGLE conditionGroup."
+                    "content": "You are a financial rule generation expert that creates precise JSON rules using EXACT column names from provided data sources."
                 },
                 {
                     "role": "user",
@@ -206,13 +183,7 @@ def generate_rule_with_llama(user_input: str, modification_request: Optional[str
         response_content = chat_completion.choices[0].message.content
         
         # Clean the response to extract just the JSON
-        json_start = response_content.find('{')
-        json_end = response_content.rfind('}') + 1
-        if json_start == -1 or json_end == 0:
-            st.error("Invalid JSON response from model")
-            return None
-            
-        json_str = response_content[json_start:json_end]
+        json_str = response_content[response_content.find('{'):response_content.rfind('}')+1]
         rule = json.loads(json_str)
         
         # Validate and correct column names
@@ -259,53 +230,35 @@ def display_rule_ui(rule: Dict[str, Any]) -> None:
                         key=f"field_{i}"
                     )
                 with cols[2]:
-                    period_index = ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"].index(
-                        rule_item.get("eligibilityPeriod", "N/A")
-                    ) if rule_item.get("eligibilityPeriod", "N/A") in ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"] else 0
                     st.selectbox("eligibilityPeriod", 
                                 ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
-                                index=period_index,
+                                index=0 if rule_item.get("eligibilityPeriod") == "N/A" else 1,
                                 key=f"period_{i}")
                 with cols[3]:
-                    func_index = ["N/A", "sum", "count", "avg", "max", "min"].index(
-                        rule_item.get("function", "N/A")
-                    ) if rule_item.get("function", "N/A") in ["N/A", "sum", "count", "avg", "max", "min"] else 0
                     st.selectbox("function", 
                                 ["N/A", "sum", "count", "avg", "max", "min"],
-                                index=func_index,
+                                index=0 if rule_item.get("function") == "N/A" else 1,
                                 key=f"func_{i}")
                 with cols[4]:
-                    op_options = ["=", ">", "<", ">=", "<=", "!=", "contains"]
-                    op_index = op_options.index(rule_item.get("operator", "=")) if rule_item.get("operator", "=") in op_options else 0
                     st.selectbox("Operator", 
-                                op_options,
-                                index=op_index,
+                                ["=", ">", "<", ">=", "<=", "!=", "contains"],
+                                index=0,
                                 key=f"op_{i}")
                 with cols[5]:
-                    st.text_input("Value", value=str(rule_item.get("value", "")), 
+                    st.text_input("Value", value=rule_item.get("value", ""), 
                                 key=f"val_{i}")
                 
                 if i < len(rule["rules"]) - 1:
                     with cols[6]:
-                        connector_options = ["AND", "OR"]
-                        conn_index = connector_options.index(rule_item.get("connector", "AND")) if rule_item.get("connector", "AND") in connector_options else 0
                         st.selectbox("Connector", 
-                                    connector_options,
-                                    index=conn_index,
+                                    ["AND", "OR"],
+                                    index=0 if rule_item.get("connector", "AND") == "AND" else 1,
                                     key=f"conn_{i}")
         
         elif rule_item.get("ruleType") == "conditionGroup":
-            with st.expander(f"Condition Group", expanded=True):
-                # Display group-level connector
-                group_connector = rule_item.get("connector", "AND")
-                st.selectbox("Group Connector", 
-                            ["AND", "OR"],
-                            index=0 if group_connector == "AND" else 1,
-                            key=f"group_conn_{i}")
-                
-                # Display conditions within the group
+            with st.expander(f"Condition Group {i+1}", expanded=True):
+                st.markdown("#### Condition Group")
                 for j, condition in enumerate(rule_item.get("conditions", [])):
-                    st.markdown(f"**Condition {j+1}**")
                     cols = st.columns(7)
                     with cols[0]:
                         selected_ds = st.selectbox(
@@ -325,39 +278,29 @@ def display_rule_ui(rule: Dict[str, Any]) -> None:
                             key=f"gfield_{i}_{j}"
                         )
                     with cols[2]:
-                        period_index = ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"].index(
-                            condition.get("eligibilityPeriod", "N/A")
-                        ) if condition.get("eligibilityPeriod", "N/A") in ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"] else 0
                         st.selectbox("eligibilityPeriod", 
                                     ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
-                                    index=period_index,
+                                    index=0 if condition.get("eligibilityPeriod") == "N/A" else 1,
                                     key=f"gperiod_{i}_{j}")
                     with cols[3]:
-                        func_index = ["N/A", "sum", "count", "avg", "max", "min"].index(
-                            condition.get("function", "N/A")
-                        ) if condition.get("function", "N/A") in ["N/A", "sum", "count", "avg", "max", "min"] else 0
                         st.selectbox("function", 
                                     ["N/A", "sum", "count", "avg", "max", "min"],
-                                    index=func_index,
+                                    index=0 if condition.get("function") == "N/A" else 1,
                                     key=f"gfunc_{i}_{j}")
                     with cols[4]:
-                        op_options = ["=", ">", "<", ">=", "<=", "!=", "contains"]
-                        op_index = op_options.index(condition.get("operator", "=")) if condition.get("operator", "=") in op_options else 0
                         st.selectbox("Operator", 
-                                    op_options,
-                                    index=op_index,
+                                    ["=", ">", "<", ">=", "<=", "!=", "contains"],
+                                    index=0,
                                     key=f"gop_{i}_{j}")
                     with cols[5]:
-                        st.text_input("Value", value=str(condition.get("value", "")), 
+                        st.text_input("Value", value=condition.get("value", ""), 
                                     key=f"gval_{i}_{j}")
                     
                     if j < len(rule_item.get("conditions", [])) - 1:
                         with cols[6]:
-                            connector_options = ["AND", "OR"]
-                            conn_index = connector_options.index(condition.get("connector", "AND")) if condition.get("connector", "AND") in connector_options else 0
                             st.selectbox("Connector", 
-                                        connector_options,
-                                        index=conn_index,
+                                        ["AND", "OR"],
+                                        index=0 if condition.get("connector", "AND") == "AND" else 1,
                                         key=f"gconn_{i}_{j}")
 
 def initialize_session_state():
@@ -455,11 +398,6 @@ def main():
             font-weight: bold;
             background-color: #f5f5f5;
             padding: 10px 15px;
-        }
-        .condition-group {
-            border-left: 3px solid #4285f4;
-            padding-left: 15px;
-            margin-top: 10px;
         }
     </style>
     """, unsafe_allow_html=True)
