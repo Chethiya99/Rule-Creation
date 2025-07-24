@@ -287,6 +287,45 @@ def display_rule_ui(rule: Dict[str, Any]) -> None:
                                         key=f"gconn_{i}_{j}")
 
 # ... [rest of the code remains the same as previous version, including initialize_session_state, display_chat_message, handle_user_confirmation, generate_new_rule, and main functions] ...
-
+def main():
+    st.set_page_config(page_title="Mortgage Rule Generator", layout="wide")
+    st.title("🏦 Mortgage Rule Generator with Llama 3")
+    
+    # Custom CSS for better UI
+    st.markdown("""
+    <style>
+        .stChatFloatingInputContainer {
+            bottom: 20px;
+        }
+        .stChatMessage {
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+        }
+        .assistant-message {
+            background-color: #f0f2f6;
+        }
+        .user-message {
+            background-color: #e3f2fd;
+        }
+        .stTextInput input, .stSelectbox select {
+            font-size: 14px !important;
+        }
+        .stExpander {
+            margin-bottom: 15px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+        }
+        .stExpander .streamlit-expanderHeader {
+            font-weight: bold;
+            background-color: #f5f5f5;
+            padding: 10px 15px;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Initialize session state
+    initialize_session_state()
+    
 if __name__ == "__main__":
     main()
