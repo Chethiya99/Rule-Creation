@@ -34,8 +34,17 @@ def load_csv_structures():
         for file in csv_files:
             file_path = os.path.join(data_dir, file)
             if os.path.exists(file_path):
-                df = pd.read_csv(file_path)
-                csv_structures[file] = list(df.columns)
+                try:
+                    df = pd.read_csv(file_path)
+                    csv_structures[file] = list(df.columns)
+                    st.session_state[f"df_{file}"] = df  # Store dataframe in session state
+                except Exception as e:
+                    st.warning(f"Error reading {file_path}: {str(e)}")
+                    # Fallback to sample structure if file can't be read
+                    if file == "sample_mortgage_accounts.csv":
+                        csv_structures[file] = ["customer_id", "account_status", "loan_amount", "interest_rate", "start_date", "term"]
+                    elif file == "sample_credit_card_transactions.csv":
+                        csv_structures[file] = ["transaction_id", "card_id", "customer_id", "amount", "date", "merchant", "category"]
             else:
                 st.warning(f"File not found: {file_path}")
                 # Fallback to sample structure if file not found
@@ -43,7 +52,6 @@ def load_csv_structures():
                     csv_structures[file] = ["customer_id", "account_status", "loan_amount", "interest_rate", "start_date", "term"]
                 elif file == "sample_credit_card_transactions.csv":
                     csv_structures[file] = ["transaction_id", "card_id", "customer_id", "amount", "date", "merchant", "category"]
-                # Add fallbacks for other files as needed
         
         return csv_structures
     
@@ -131,21 +139,25 @@ def generate_rule_with_llama(user_input: str, modification_request: Optional[str
                 }
             ],
             model="llama3-70b-8192",
-            temperature=0.3
+            temperature=0.3,
+            response_format={"type": "json_object"}
         )
         
         response_content = chat_completion.choices[0].message.content
         
         # Clean the response to extract just the JSON
-        json_str = response_content[response_content.find('{'):response_content.rfind('}')+1]
-        rule = json.loads(json_str)
-        
-        # Validate that all columns exist in the data sources
-        if not validate_rule_columns(rule):
-            st.error("Generated rule contains invalid columns. Please try again.")
-            return None
+        try:
+            rule = json.loads(response_content)
             
-        return rule
+            # Validate that all columns exist in the data sources
+            if not validate_rule_columns(rule):
+                st.error("Generated rule contains invalid columns. Please try again.")
+                return None
+                
+            return rule
+        except json.JSONDecodeError:
+            st.error("Failed to parse the AI response. Please try again.")
+            return None
     
     except Exception as e:
         st.error(f"Error generating rule: {str(e)}")
@@ -204,43 +216,58 @@ def display_rule_ui(rule: Dict[str, Any]) -> None:
             with st.expander(f"Condition {i+1}", expanded=True):
                 cols = st.columns(7)
                 with cols[0]:
-                    st.selectbox("Data Source", 
-                                options=list(CSV_STRUCTURES.keys()),
-                                index=list(CSV_STRUCTURES.keys()).index(rule_item.get("dataSource")) if rule_item.get("dataSource") in CSV_STRUCTURES else 0,
-                                key=f"ds_{i}")
+                    selected_ds = st.selectbox(
+                        "Data Source",
+                        options=list(CSV_STRUCTURES.keys()),
+                        index=list(CSV_STRUCTURES.keys()).index(rule_item["dataSource"]) if rule_item["dataSource"] in CSV_STRUCTURES else 0,
+                        key=f"ds_{i}"
+                    )
                 with cols[1]:
-                    if rule_item.get("dataSource") in CSV_STRUCTURES:
-                        st.selectbox("Field", 
-                                    options=CSV_STRUCTURES[rule_item.get("dataSource")],
-                                    index=CSV_STRUCTURES[rule_item.get("dataSource")].index(rule_item.get("field")) if rule_item.get("field") in CSV_STRUCTURES[rule_item.get("dataSource")] else 0,
-                                    key=f"field_{i}")
+                    if selected_ds in CSV_STRUCTURES:
+                        st.selectbox(
+                            "Field",
+                            options=CSV_STRUCTURES[selected_ds],
+                            index=CSV_STRUCTURES[selected_ds].index(rule_item["field"]) if rule_item["field"] in CSV_STRUCTURES[selected_ds] else 0,
+                            key=f"field_{i}"
+                        )
                     else:
                         st.text_input("Field", value=rule_item.get("field", ""), key=f"field_{i}")
                 with cols[2]:
-                    st.selectbox("eligibilityPeriod", 
-                                ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
-                                index=0 if rule_item.get("eligibilityPeriod") == "N/A" else 1,
-                                key=f"period_{i}")
+                    st.selectbox(
+                        "eligibilityPeriod",
+                        ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
+                        index=0 if rule_item.get("eligibilityPeriod") == "N/A" else 1,
+                        key=f"period_{i}"
+                    )
                 with cols[3]:
-                    st.selectbox("function", 
-                                ["N/A", "sum", "count", "avg", "max", "min"],
-                                index=0 if rule_item.get("function") == "N/A" else 1,
-                                key=f"func_{i}")
+                    st.selectbox(
+                        "function",
+                        ["N/A", "sum", "count", "avg", "max", "min"],
+                        index=0 if rule_item.get("function") == "N/A" else 1,
+                        key=f"func_{i}"
+                    )
                 with cols[4]:
-                    st.selectbox("Operator", 
-                                ["=", ">", "<", ">=", "<=", "!=", "contains"],
-                                index=0,
-                                key=f"op_{i}")
+                    st.selectbox(
+                        "Operator",
+                        ["=", ">", "<", ">=", "<=", "!=", "contains"],
+                        index=0,
+                        key=f"op_{i}"
+                    )
                 with cols[5]:
-                    st.text_input("Value", value=rule_item.get("value", ""), 
-                                key=f"val_{i}")
+                    st.text_input(
+                        "Value",
+                        value=rule_item.get("value", ""),
+                        key=f"val_{i}"
+                    )
                 
                 if i < len(rule["rules"]) - 1:
                     with cols[6]:
-                        st.selectbox("Connector", 
-                                    ["AND", "OR"],
-                                    index=0 if rule_item.get("connector", "AND") == "AND" else 1,
-                                    key=f"conn_{i}")
+                        st.selectbox(
+                            "Connector",
+                            ["AND", "OR"],
+                            index=0 if rule_item.get("connector", "AND") == "AND" else 1,
+                            key=f"conn_{i}"
+                        )
         
         elif rule_item.get("ruleType") == "conditionGroup":
             with st.expander(f"Condition Group {i+1}", expanded=True):
@@ -248,45 +275,124 @@ def display_rule_ui(rule: Dict[str, Any]) -> None:
                 for j, condition in enumerate(rule_item.get("conditions", [])):
                     cols = st.columns(7)
                     with cols[0]:
-                        st.selectbox("Data Source", 
-                                    options=list(CSV_STRUCTURES.keys()),
-                                    index=list(CSV_STRUCTURES.keys()).index(condition.get("dataSource")) if condition.get("dataSource") in CSV_STRUCTURES else 0,
-                                    key=f"gds_{i}_{j}")
+                        selected_ds = st.selectbox(
+                            "Data Source",
+                            options=list(CSV_STRUCTURES.keys()),
+                            index=list(CSV_STRUCTURES.keys()).index(condition["dataSource"]) if condition["dataSource"] in CSV_STRUCTURES else 0,
+                            key=f"gds_{i}_{j}"
+                        )
                     with cols[1]:
-                        if condition.get("dataSource") in CSV_STRUCTURES:
-                            st.selectbox("Field", 
-                                        options=CSV_STRUCTURES[condition.get("dataSource")],
-                                        index=CSV_STRUCTURES[condition.get("dataSource")].index(condition.get("field")) if condition.get("field") in CSV_STRUCTURES[condition.get("dataSource")] else 0,
-                                        key=f"gfield_{i}_{j}")
+                        if selected_ds in CSV_STRUCTURES:
+                            st.selectbox(
+                                "Field",
+                                options=CSV_STRUCTURES[selected_ds],
+                                index=CSV_STRUCTURES[selected_ds].index(condition["field"]) if condition["field"] in CSV_STRUCTURES[selected_ds] else 0,
+                                key=f"gfield_{i}_{j}"
+                            )
                         else:
                             st.text_input("Field", value=condition.get("field", ""), key=f"gfield_{i}_{j}")
                     with cols[2]:
-                        st.selectbox("eligibilityPeriod", 
-                                    ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
-                                    index=0 if condition.get("eligibilityPeriod") == "N/A" else 1,
-                                    key=f"gperiod_{i}_{j}")
+                        st.selectbox(
+                            "eligibilityPeriod",
+                            ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
+                            index=0 if condition.get("eligibilityPeriod") == "N/A" else 1,
+                            key=f"gperiod_{i}_{j}"
+                        )
                     with cols[3]:
-                        st.selectbox("function", 
-                                    ["N/A", "sum", "count", "avg", "max", "min"],
-                                    index=0 if condition.get("function") == "N/A" else 1,
-                                    key=f"gfunc_{i}_{j}")
+                        st.selectbox(
+                            "function",
+                            ["N/A", "sum", "count", "avg", "max", "min"],
+                            index=0 if condition.get("function") == "N/A" else 1,
+                            key=f"gfunc_{i}_{j}"
+                        )
                     with cols[4]:
-                        st.selectbox("Operator", 
-                                    ["=", ">", "<", ">=", "<=", "!=", "contains"],
-                                    index=0,
-                                    key=f"gop_{i}_{j}")
+                        st.selectbox(
+                            "Operator",
+                            ["=", ">", "<", ">=", "<=", "!=", "contains"],
+                            index=0,
+                            key=f"gop_{i}_{j}"
+                        )
                     with cols[5]:
-                        st.text_input("Value", value=condition.get("value", ""), 
-                                    key=f"gval_{i}_{j}")
+                        st.text_input(
+                            "Value",
+                            value=condition.get("value", ""),
+                            key=f"gval_{i}_{j}"
+                        )
                     
                     if j < len(rule_item.get("conditions", [])) - 1:
                         with cols[6]:
-                            st.selectbox("Connector", 
-                                        ["AND", "OR"],
-                                        index=0 if condition.get("connector", "AND") == "AND" else 1,
-                                        key=f"gconn_{i}_{j}")
+                            st.selectbox(
+                                "Connector",
+                                ["AND", "OR"],
+                                index=0 if condition.get("connector", "AND") == "AND" else 1,
+                                key=f"gconn_{i}_{j}"
+                            )
 
-# ... [rest of the code remains the same as previous version, including initialize_session_state, display_chat_message, handle_user_confirmation, generate_new_rule, and main functions] ...
+def initialize_session_state():
+    """Initialize all session state variables"""
+    if "messages" not in st.session_state:
+        st.session_state.messages = [
+            {"role": "assistant", "content": "Hello! I can help you create mortgage holder rules. What criteria would you like to use?"}
+        ]
+    if "current_rule" not in st.session_state:
+        st.session_state.current_rule = None
+    if "confirmed" not in st.session_state:
+        st.session_state.confirmed = False
+    if "user_prompt" not in st.session_state:
+        st.session_state.user_prompt = ""
+    if "awaiting_confirmation" not in st.session_state:
+        st.session_state.awaiting_confirmation = False
+    if "awaiting_modification" not in st.session_state:
+        st.session_state.awaiting_modification = False
+    if "dataframes" not in st.session_state:
+        st.session_state.dataframes = {}
+
+def display_chat_message(role: str, content: str):
+    """Display a chat message in the UI"""
+    with st.chat_message(role):
+        # Clean the content if it's user input
+        if role == "user":
+            content = clean_user_input(content)
+        st.markdown(content)
+
+def handle_user_confirmation(confirmation: bool):
+    """Handle user confirmation or modification request"""
+    if confirmation:
+        st.session_state.confirmed = True
+        st.session_state.awaiting_confirmation = False
+        st.session_state.messages.append({"role": "assistant", "content": "Great! Here's your final rule:"})
+    else:
+        st.session_state.awaiting_confirmation = False
+        st.session_state.awaiting_modification = True
+        st.session_state.messages.append({"role": "assistant", "content": "What changes would you like to make to the rule?"})
+
+def generate_new_rule():
+    """Generate a new rule based on current state"""
+    modification_request = None
+    if st.session_state.awaiting_modification and st.session_state.messages[-1]["role"] == "user":
+        modification_request = clean_user_input(st.session_state.messages[-1]["content"])
+    
+    with st.spinner("Generating rule..."):
+        new_rule = generate_rule_with_llama(
+            st.session_state.user_prompt,
+            modification_request
+        )
+        
+        if new_rule:
+            st.session_state.current_rule = new_rule
+            rule_preview = json.dumps(new_rule, indent=2)
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": f"I've generated this rule:\n\n```json\n{rule_preview}\n```\n\nDoes this meet your requirements?"
+            })
+            st.session_state.awaiting_confirmation = True
+            st.session_state.awaiting_modification = False
+        else:
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": "I couldn't generate a valid rule. Could you please provide more details?"
+            })
+
 def main():
     st.set_page_config(page_title="Mortgage Rule Generator", layout="wide")
     st.title("🏦 Mortgage Rule Generator with Llama 3")
@@ -320,6 +426,9 @@ def main():
             font-weight: bold;
             background-color: #f5f5f5;
             padding: 10px 15px;
+        }
+        .stSelectbox > div > div {
+            padding: 8px 12px;
         }
     </style>
     """, unsafe_allow_html=True)
