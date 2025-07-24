@@ -173,12 +173,153 @@ def generate_rule_with_llama(user_input: str, modification_request: Optional[str
         st.error(f"Error generating rule: {str(e)}")
         return None
 
-# [Rest of your existing functions remain exactly the same...]
-# display_rule_ui()
-# initialize_session_state()
-# display_chat_message()
-# handle_user_confirmation()
-# generate_new_rule()
+def display_rule_ui(rule: Dict[str, Any]) -> None:
+    """Display the rule in the UI with all required fields"""
+    if not rule or "rules" not in rule:
+        st.warning("No valid rule generated yet")
+        return
+    
+    st.subheader("Rule Conditions")
+    st.markdown("Define the logical conditions for this rule to apply.")
+    
+    # Priority checkbox
+    st.checkbox("Enable priority order and drag & drop", value=False, key="priority_order")
+    
+    # Main rule display
+    for i, rule_item in enumerate(rule["rules"]):
+        if rule_item.get("ruleType") == "condition":
+            with st.expander(f"Condition {i+1}", expanded=True):
+                cols = st.columns(7)
+                with cols[0]:
+                    st.text_input("Data Source", value=rule_item.get("dataSource", ""), 
+                                key=f"ds_{i}")
+                with cols[1]:
+                    st.text_input("Field", value=rule_item.get("field", ""), 
+                                key=f"field_{i}")
+                with cols[2]:
+                    st.selectbox("eligibilityPeriod", 
+                                ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
+                                index=0 if rule_item.get("eligibilityPeriod") == "N/A" else 1,
+                                key=f"period_{i}")
+                with cols[3]:
+                    st.selectbox("function", 
+                                ["N/A", "sum", "count", "avg", "max", "min"],
+                                index=0 if rule_item.get("function") == "N/A" else 1,
+                                key=f"func_{i}")
+                with cols[4]:
+                    st.selectbox("Operator", 
+                                ["=", ">", "<", ">=", "<=", "!=", "contains"],
+                                index=0,
+                                key=f"op_{i}")
+                with cols[5]:
+                    st.text_input("Value", value=rule_item.get("value", ""), 
+                                key=f"val_{i}")
+                
+                if i < len(rule["rules"]) - 1:
+                    with cols[6]:
+                        st.selectbox("Connector", 
+                                    ["AND", "OR"],
+                                    index=0 if rule_item.get("connector", "AND") == "AND" else 1,
+                                    key=f"conn_{i}")
+        
+        elif rule_item.get("ruleType") == "conditionGroup":
+            with st.expander(f"Condition Group {i+1}", expanded=True):
+                st.markdown("#### Condition Group")
+                for j, condition in enumerate(rule_item.get("conditions", [])):
+                    cols = st.columns(7)
+                    with cols[0]:
+                        st.text_input("Data Source", value=condition.get("dataSource", ""), 
+                                    key=f"gds_{i}_{j}")
+                    with cols[1]:
+                        st.text_input("Field", value=condition.get("field", ""), 
+                                    key=f"gfield_{i}_{j}")
+                    with cols[2]:
+                        st.selectbox("eligibilityPeriod", 
+                                    ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
+                                    index=0 if condition.get("eligibilityPeriod") == "N/A" else 1,
+                                    key=f"gperiod_{i}_{j}")
+                    with cols[3]:
+                        st.selectbox("function", 
+                                    ["N/A", "sum", "count", "avg", "max", "min"],
+                                    index=0 if condition.get("function") == "N/A" else 1,
+                                    key=f"gfunc_{i}_{j}")
+                    with cols[4]:
+                        st.selectbox("Operator", 
+                                    ["=", ">", "<", ">=", "<=", "!=", "contains"],
+                                    index=0,
+                                    key=f"gop_{i}_{j}")
+                    with cols[5]:
+                        st.text_input("Value", value=condition.get("value", ""), 
+                                    key=f"gval_{i}_{j}")
+                    
+                    if j < len(rule_item.get("conditions", [])) - 1:
+                        with cols[6]:
+                            st.selectbox("Connector", 
+                                        ["AND", "OR"],
+                                        index=0 if condition.get("connector", "AND") == "AND" else 1,
+                                        key=f"gconn_{i}_{j}")
+
+def initialize_session_state():
+    """Initialize all session state variables"""
+    if "messages" not in st.session_state:
+        st.session_state.messages = [
+            {"role": "assistant", "content": "Hello! I can help you create mortgage holder rules. What criteria would you like to use?"}
+        ]
+    if "current_rule" not in st.session_state:
+        st.session_state.current_rule = None
+    if "confirmed" not in st.session_state:
+        st.session_state.confirmed = False
+    if "user_prompt" not in st.session_state:
+        st.session_state.user_prompt = ""
+    if "awaiting_confirmation" not in st.session_state:
+        st.session_state.awaiting_confirmation = False
+    if "awaiting_modification" not in st.session_state:
+        st.session_state.awaiting_modification = False
+
+def display_chat_message(role: str, content: str):
+    """Display a chat message in the UI"""
+    with st.chat_message(role):
+        if role == "user":
+            content = clean_user_input(content)
+        st.markdown(content)
+
+def handle_user_confirmation(confirmation: bool):
+    """Handle user confirmation or modification request"""
+    if confirmation:
+        st.session_state.confirmed = True
+        st.session_state.awaiting_confirmation = False
+        st.session_state.messages.append({"role": "assistant", "content": "Great! Here's your final rule:"})
+    else:
+        st.session_state.awaiting_confirmation = False
+        st.session_state.awaiting_modification = True
+        st.session_state.messages.append({"role": "assistant", "content": "What changes would you like to make to the rule?"})
+
+def generate_new_rule():
+    """Generate a new rule based on current state"""
+    modification_request = None
+    if st.session_state.awaiting_modification and st.session_state.messages[-1]["role"] == "user":
+        modification_request = clean_user_input(st.session_state.messages[-1]["content"])
+    
+    with st.spinner("Generating rule..."):
+        new_rule = generate_rule_with_llama(
+            st.session_state.user_prompt,
+            modification_request
+        )
+        
+        if new_rule:
+            st.session_state.current_rule = new_rule
+            rule_preview = json.dumps(new_rule, indent=2)
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": f"I've generated this rule:\n\n```json\n{rule_preview}\n```\n\nDoes this meet your requirements?"
+            })
+            st.session_state.awaiting_confirmation = True
+            st.session_state.awaiting_modification = False
+        else:
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": "I couldn't generate a valid rule. Could you please provide more details?"
+            })
 
 def main():
     st.set_page_config(page_title="Mortgage Rule Generator", layout="wide")
