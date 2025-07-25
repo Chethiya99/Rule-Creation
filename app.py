@@ -42,7 +42,6 @@ CSV_STRUCTURES = {
     ]
 }
 
-
 # Create mapping for case-insensitive matching
 COLUMN_MAPPING = {}
 for file, columns in CSV_STRUCTURES.items():
@@ -54,9 +53,36 @@ def clean_user_input(text: str) -> str:
     text = ' '.join(text.split())
     return text.replace(" o n ", " on ").replace(" A N D ", " AND ").replace(" O R ", " OR ")
 
+def detect_connectors(text: str) -> List[str]:
+    """Analyze user input to detect logical connectors"""
+    text_lower = text.lower()
+    connectors = []
+    
+    # Check for explicit AND/OR combinations
+    if " and " in text_lower and " or " in text_lower:
+        # Count occurrences to determine primary connector
+        and_count = text_lower.count(" and ")
+        or_count = text_lower.count(" or ")
+        primary = "AND" if and_count > or_count else "OR"
+        secondary = "OR" if primary == "AND" else "AND"
+        connectors = [primary, secondary]
+    elif " and " in text_lower:
+        connectors = ["AND"] * (text_lower.count(" and ") + 1)
+    elif " or " in text_lower:
+        connectors = ["OR"] * (text_lower.count(" or ") + 1)
+    else:
+        # Default to AND if no explicit connectors found
+        connectors = ["AND"]
+    
+    return connectors
+
 def generate_prompt_guidance(user_input: str, modification_request: Optional[str] = None) -> str:
-    """Generate guidance for the AI with emphasis on exact column names"""
+    """Generate guidance for the AI with emphasis on exact column names and connectors"""
     available_data = "\n".join([f"- {f}: {', '.join(cols)}" for f, cols in CSV_STRUCTURES.items()])
+    
+    # Detect connectors from user input
+    connectors = detect_connectors(user_input)
+    connector_instruction = f"Detected logical connectors in user input: {', '.join(connectors)}"
     
     base_prompt = f"""
     You are a financial rule generation assistant. Your task is to help create rules for mortgage holders based on available data sources.
@@ -64,7 +90,9 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     CRITICAL INSTRUCTIONS:
     1. You MUST use ONLY the exact column names from the available data sources
     2. Field names are case-sensitive and must match exactly as provided
-    3. If a similar concept exists but with different naming, use the provided column name
+    3. Pay special attention to logical connectors (AND/OR) in the user's requirements
+    4. {connector_instruction}
+    5. If a similar concept exists but with different naming, use the provided column name
 
     Available data sources and their EXACT columns:
     {available_data}
@@ -79,7 +107,7 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     Analyze this requirement and:
     1. Identify which data sources are needed
     2. Use ONLY the exact column names from the sources
-    3. Create a logical rule structure with proper AND/OR conditions
+    3. Create a logical rule structure with proper AND/OR conditions based on the user's phrasing
     4. Include all these fields for each condition:
        - dataSource (file name exactly as shown)
        - field (column name exactly as shown)
@@ -87,7 +115,8 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
        - function (use "sum", "count", "avg" where appropriate, otherwise "N/A")
        - operator
        - value
-    5. Output the rule in JSON format matching this schema:
+    5. For condition groups, use connectors that match the user's phrasing
+    6. Output the rule in JSON format matching this schema:
         {
             "rules": [
                 {
@@ -107,7 +136,7 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
         }
 
     Respond ONLY with the JSON output. Do not include any additional explanation or markdown formatting.
-    The rule should be as specific as possible to match the user's requirements.
+    The rule should precisely match the user's requirements including their logical phrasing.
     """
     
     return base_prompt
@@ -145,10 +174,10 @@ def correct_column_name(field_name: str) -> str:
     # Try common variations
     variations = {
         "id": "customer_id",
-        "payment": "payment_amount",
-        "date": "payment_date",
+        "payment": "repayment_amount",
+        "date": "repayment_date",
         "status": "account_status",
-        "amount": "payment_amount",
+        "amount": "repayment_amount",
         "score": "credit_score",
         "type": "transaction_type"
     }
@@ -168,7 +197,7 @@ def generate_rule_with_llama(user_input: str, modification_request: Optional[str
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a financial rule generation expert that creates precise JSON rules using EXACT column names from provided data sources."
+                    "content": "You are a financial rule generation expert that creates precise JSON rules using EXACT column names and proper logical connectors from provided data sources."
                 },
                 {
                     "role": "user",
