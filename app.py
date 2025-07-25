@@ -65,6 +65,8 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     1. You MUST use ONLY the exact column names from the available data sources
     2. Field names are case-sensitive and must match exactly as provided
     3. If a similar concept exists but with different naming, use the provided column name
+    4. please identify exact operators use the the user promt
+    5. please identify the exact connectors mention in the user prompt.
 
     Available data sources and their EXACT columns:
     {available_data}
@@ -177,7 +179,7 @@ def generate_rule_with_llama(user_input: str, modification_request: Optional[str
                 }
             ],
             model="llama3-70b-8192",
-            temperature=0.3,
+            temperature=0.5,
             response_format={"type": "json_object"}
         )
         
