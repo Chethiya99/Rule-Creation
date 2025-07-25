@@ -85,8 +85,9 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
        - field (column name exactly as shown)
        - eligibilityPeriod (use "Rolling 30 days" for time-based conditions, otherwise "N/A")
        - function (use "sum", "count", "avg" where appropriate, otherwise "N/A")
-       - operator
+       - operator (please correctly identify the operator in the user promt. for an example >, <,>=,<=,!= etc.)
        - value
+       - Connector (please correctly identify the Connector in the user promt. example AND,OR etc)
     5. Output the rule in JSON format matching this schema:
         {
             "rules": [
