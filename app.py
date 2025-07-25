@@ -16,7 +16,7 @@ except Exception as e:
 # Define CSV file structures with exact column names
 CSV_STRUCTURES = {
     "sample_mortgage_accounts.csv": [
-        "ccustomer_id", "product_type", "account_status", "loan_open_date", "loan_balance"
+        "customer_id", "product_type", "account_status", "loan_open_date", "loan_balance"
     ],
     "sample_loan_repayments.csv": [
         "repayment_id", "customer_id", "loan_account_number", "repayment_date",
@@ -42,7 +42,6 @@ CSV_STRUCTURES = {
     ]
 }
 
-
 # Create mapping for case-insensitive matching
 COLUMN_MAPPING = {}
 for file, columns in CSV_STRUCTURES.items():
@@ -65,8 +64,10 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     1. You MUST use ONLY the exact column names from the available data sources
     2. Field names are case-sensitive and must match exactly as provided
     3. If a similar concept exists but with different naming, use the provided column name
-    4. please identify exact operators use the the user promt
-    5. please identify the exact connectors mention in the user prompt.
+    4. For simple AND conditions, create separate conditions with "AND" connectors
+    5. Only use conditionGroup for complex nested logic
+    6. For amounts, use exact column names like "transaction_amount"
+    7. For status checks, use exact column names like "account_status"
 
     Available data sources and their EXACT columns:
     {available_data}
@@ -81,15 +82,14 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     Analyze this requirement and:
     1. Identify which data sources are needed
     2. Use ONLY the exact column names from the sources
-    3. Create a logical rule structure with proper AND/OR conditions
+    3. Create simple conditions connected with AND/OR as specified by user
     4. Include all these fields for each condition:
        - dataSource (file name exactly as shown)
        - field (column name exactly as shown)
        - eligibilityPeriod (use "Rolling 30 days" for time-based conditions, otherwise "N/A")
        - function (use "sum", "count", "avg" where appropriate, otherwise "N/A")
-       - operator (please correctly identify the operator in the user promt. for an example >, <,>=,<=,!= etc.)
-       - value
-       - Connector (please correctly identify the Connector in the user promt. example AND,OR etc)
+       - operator (use "=", ">", "<", ">=", "<=", "!=" as appropriate)
+       - value (use exact values from user request)
     5. Output the rule in JSON format matching this schema:
         {
             "rules": [
@@ -102,9 +102,8 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
                     "operator": "comparison_operator",
                     "value": "comparison_value",
                     "priority": null,
-                    "ruleType": "condition" or "conditionGroup",
-                    "connector": "AND" or "OR" or null,
-                    "conditions": [ /* for conditionGroup only */ ]
+                    "ruleType": "condition",
+                    "connector": "AND" or "OR" or null
                 }
             ]
         }
@@ -115,52 +114,32 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     
     return base_prompt
 
-def validate_and_correct_columns(rule: Dict[str, Any]) -> Dict[str, Any]:
-    """Ensure all field names match the exact column names from CSV structures"""
+def validate_and_correct_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate and correct the rule structure"""
     if not rule or "rules" not in rule:
         return rule
     
+    # Remove any condition groups for simple AND conditions
+    simplified_rules = []
     for rule_item in rule["rules"]:
-        # Handle condition groups
         if rule_item.get("ruleType") == "conditionGroup":
-            for condition in rule_item.get("conditions", []):
-                condition["field"] = correct_column_name(condition.get("field", ""))
-        # Handle individual conditions
+            # For simple AND groups, flatten into individual conditions
+            if rule_item.get("connector") == "AND":
+                for condition in rule_item.get("conditions", []):
+                    simplified_rules.append(condition)
+                # Add AND connector to the last condition
+                if simplified_rules:
+                    simplified_rules[-1]["connector"] = "AND"
+            else:
+                simplified_rules.append(rule_item)
         else:
-            rule_item["field"] = correct_column_name(rule_item.get("field", ""))
+            simplified_rules.append(rule_item)
     
-    return rule
-
-def correct_column_name(field_name: str) -> str:
-    """Convert field name to exact match from CSV columns"""
-    if not field_name:
-        return field_name
+    # Ensure the last condition has no connector
+    if simplified_rules:
+        simplified_rules[-1]["connector"] = None
     
-    # Try exact match first
-    if field_name in COLUMN_MAPPING.values():
-        return field_name
-    
-    # Try case-insensitive match
-    lower_name = field_name.lower()
-    if lower_name in COLUMN_MAPPING:
-        return COLUMN_MAPPING[lower_name]
-    
-    # Try common variations
-    variations = {
-        "id": "customer_id",
-        "payment": "payment_amount",
-        "date": "payment_date",
-        "status": "account_status",
-        "amount": "payment_amount",
-        "score": "credit_score",
-        "type": "transaction_type"
-    }
-    
-    for partial, full in variations.items():
-        if partial in lower_name:
-            return full
-    
-    return field_name  # Return original if no match found
+    return {"rules": simplified_rules}
 
 def generate_rule_with_llama(user_input: str, modification_request: Optional[str] = None) -> Dict[str, Any]:
     """Use Groq/Llama to generate a rule based on user input"""
@@ -179,7 +158,7 @@ def generate_rule_with_llama(user_input: str, modification_request: Optional[str
                 }
             ],
             model="llama3-70b-8192",
-            temperature=0.5,
+            temperature=0.3,
             response_format={"type": "json_object"}
         )
         
@@ -189,8 +168,8 @@ def generate_rule_with_llama(user_input: str, modification_request: Optional[str
         json_str = response_content[response_content.find('{'):response_content.rfind('}')+1]
         rule = json.loads(json_str)
         
-        # Validate and correct column names
-        return validate_and_correct_columns(rule)
+        # Validate and correct the rule structure
+        return validate_and_correct_rule(rule)
     
     except Exception as e:
         st.error(f"Error generating rule: {str(e)}")
@@ -243,12 +222,16 @@ def display_rule_ui(rule: Dict[str, Any]) -> None:
                                 index=0 if rule_item.get("function") == "N/A" else 1,
                                 key=f"func_{i}")
                 with cols[4]:
+                    # Operator selection with correct default
+                    operator_options = ["=", ">", "<", ">=", "<=", "!=", "contains"]
+                    operator_index = operator_options.index(rule_item["operator"]) if rule_item["operator"] in operator_options else 0
                     st.selectbox("Operator", 
-                                ["=", ">", "<", ">=", "<=", "!=", "contains"],
-                                index=0,
+                                operator_options,
+                                index=operator_index,
                                 key=f"op_{i}")
                 with cols[5]:
-                    st.text_input("Value", value=rule_item.get("value", ""), 
+                    # Display the exact value from the rule
+                    st.text_input("Value", value=str(rule_item.get("value", "")), 
                                 key=f"val_{i}")
                 
                 if i < len(rule["rules"]) - 1:
@@ -257,54 +240,6 @@ def display_rule_ui(rule: Dict[str, Any]) -> None:
                                     ["AND", "OR"],
                                     index=0 if rule_item.get("connector", "AND") == "AND" else 1,
                                     key=f"conn_{i}")
-        
-        elif rule_item.get("ruleType") == "conditionGroup":
-            with st.expander(f"Condition Group {i+1}", expanded=True):
-                st.markdown("#### Condition Group")
-                for j, condition in enumerate(rule_item.get("conditions", [])):
-                    cols = st.columns(7)
-                    with cols[0]:
-                        selected_ds = st.selectbox(
-                            "Data Source",
-                            options=list(CSV_STRUCTURES.keys()),
-                            index=list(CSV_STRUCTURES.keys()).index(condition["dataSource"]) 
-                            if condition["dataSource"] in CSV_STRUCTURES else 0,
-                            key=f"gds_{i}_{j}"
-                        )
-                    with cols[1]:
-                        columns = CSV_STRUCTURES.get(selected_ds, [])
-                        selected_field = st.selectbox(
-                            "Field", 
-                            options=columns,
-                            index=columns.index(condition["field"]) 
-                            if condition["field"] in columns else 0,
-                            key=f"gfield_{i}_{j}"
-                        )
-                    with cols[2]:
-                        st.selectbox("eligibilityPeriod", 
-                                    ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
-                                    index=0 if condition.get("eligibilityPeriod") == "N/A" else 1,
-                                    key=f"gperiod_{i}_{j}")
-                    with cols[3]:
-                        st.selectbox("function", 
-                                    ["N/A", "sum", "count", "avg", "max", "min"],
-                                    index=0 if condition.get("function") == "N/A" else 1,
-                                    key=f"gfunc_{i}_{j}")
-                    with cols[4]:
-                        st.selectbox("Operator", 
-                                    ["=", ">", "<", ">=", "<=", "!=", "contains"],
-                                    index=0,
-                                    key=f"gop_{i}_{j}")
-                    with cols[5]:
-                        st.text_input("Value", value=condition.get("value", ""), 
-                                    key=f"gval_{i}_{j}")
-                    
-                    if j < len(rule_item.get("conditions", [])) - 1:
-                        with cols[6]:
-                            st.selectbox("Connector", 
-                                        ["AND", "OR"],
-                                        index=0 if condition.get("connector", "AND") == "AND" else 1,
-                                        key=f"gconn_{i}_{j}")
 
 def initialize_session_state():
     """Initialize all session state variables"""
@@ -483,4 +418,4 @@ def main():
                 st.rerun()
 
 if __name__ == "__main__":
-    main() 
+    main()
